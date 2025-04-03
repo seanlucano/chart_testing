@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Z-Test Visualization</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.4.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jstat@latest/dist/jstat.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: sans-serif;
+      background-color: #f9f9f9;
+    }
+    #controls {
+      max-width: 1000px;
+      margin: 0 auto 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      align-items: center;
+    }
+    #chart-container {
+      width: 90%;
+      max-width: 1000px;
+      margin: auto;
+    }
+    canvas {
+      width: 100% !important;
+      height: 500px !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <label>
+      Tail Type:
+      <select id="tailSelect">
+        <option value="two">Two-Tailed</option>
+        <option value="left">Left-Tailed</option>
+        <option value="right">Right-Tailed</option>
+      </select>
+    </label>
+    <label>
+      Set Alpha:
+      <input type="range" id="alphaSlider" min="0.001" max="0.1" step="0.001" value="0.01">
+      <span id="alphaValue">0.010</span>
+    </label>
+    <label>
+      Distribution:
+      <select id="distributionSelect">
+        <option value="z">Z</option>
+        <option value="t">T</option>
+      </select>
+    </label>
+    <label>
+      Degrees of Freedom:
+      <input type="number" id="dfInput" step="1" value="10" min="1">
+    </label>
+    <label>
+      Z-critical: <span id="zValue">2.58</span>
+    </label>
+    <label>
+      Test Statistic:
+      <input type="number" id="testStatInput" step="0.01" value="0">
+    </label>
+  </div>
+  <div id="decision" style="text-align:center; font-size: 1.2em; font-weight: bold; margin-bottom: 0.5em;"></div>
+  <div id="pvalue" style="text-align:center; font-size: 1em; margin-bottom: 1em; font-weight: bold;"></div>
+  <div id="chart-container">
+    <canvas id="zTestChart"></canvas>
+  </div>
+  <script>
+    Chart.register(window['chartjs-plugin-annotation']);
+
+    function normalPDF(x, mean = 0, std = 1) {
+      return (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
+    }
+
+    function erf(x) {
+      const sign = Math.sign(x);
+      x = Math.abs(x);
+      const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
+            a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+      const t = 1 / (1 + p * x);
+      const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+      return sign * y;
+    }
+
+    function normalCDF(z) {
+      return 0.5 * (1 + erf(z / Math.sqrt(2)));
+    }
+
+    function inverseNormalCDF(p) {
+      if (p <= 0 || p >= 1) return NaN;
+      const a = [2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637];
+      const b = [-8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833];
+      const c = [0.3374754822726147, 0.9761690190917186,
+                0.1607979714918209, 0.0276438810333863,
+                0.0038405729373609, 0.0003951896511919,
+                0.0000321767881768, 0.0000002888167364,
+                0.0000003960315187];
+
+      let x = p - 0.5;
+      if (Math.abs(x) < 0.42) {
+        let r = x * x;
+        let num = a[3];
+        let denom = b[3];
+        for (let i = 2; i >= 0; i--) {
+          num = num * r + a[i];
+          denom = denom * r + b[i];
+        }
+        return x * num / (denom + 1.0);
+      } else {
+        let r = p < 0.5 ? p : 1 - p;
+        r = Math.log(-Math.log(r));
+        let z = c[0];
+        for (let i = 1; i < c.length; i++) {
+          z += c[i] * Math.pow(r, i);
+        }
+        return p < 0.5 ? -z : z;
+      }
+    }
+
+    function tCritical(alpha, df, tailType) {
+      if (tailType === 'two') {
+        return jStat.studentt.inv(1 - alpha / 2, df);
+      } else {
+        return jStat.studentt.inv(1 - alpha, df);
+      }
+    }
+
+    const xValues = [], yValues = [];
+    for (let x = -5; x <= 5; x += 0.1) {
+      x = Math.round(x * 100) / 100;
+      xValues.push(x);
+      yValues.push(normalPDF(x));
+    }
+
+    const ctx = document.getElementById('zTestChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: xValues,
+        datasets: [
+          { label: 'Standard Normal Curve', data: yValues, borderColor: 'black', borderWidth: 2, fill: false, pointRadius: 0 },
+          { label: 'Left Rejection', data: [], borderColor: 'rgba(255,0,0,0.6)', backgroundColor: 'rgba(255,0,0,0.3)', fill: true, pointRadius: 0 },
+          { label: 'Right Rejection', data: [], borderColor: 'rgba(255,0,0,0.6)', backgroundColor: 'rgba(255,0,0,0.3)', fill: true, pointRadius: 0 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { type: 'linear', title: { display: true, text: 'z-score' } },
+          y: { title: { display: true, text: 'Probability Density' }, beginAtZero: true }
+        },
+        plugins: {
+          legend: { position: 'top' },
+          title: { display: true, text: 'Z-Test Rejection Regions' },
+          annotation: { annotations: {} }
+        }
+      }
+    });
+
+    function updateChart(alpha, tailType) {
+      alpha = Math.max(0.001, Math.min(alpha, 0.1));
+      const distType = document.getElementById('distributionSelect').value;
+      const df = parseInt(document.getElementById('dfInput').value) || 1;
+      const zCritical = distType === 'z'
+        ? (tailType === 'two' ? inverseNormalCDF(1 - alpha / 2) : inverseNormalCDF(1 - alpha))
+        : tCritical(alpha, df, tailType);
+      const testStat = parseFloat(document.getElementById('testStatInput').value) || 0;
+
+      document.getElementById('zValue').textContent = zCritical.toFixed(2);
+      document.getElementById('alphaValue').textContent = alpha.toFixed(3);
+
+      chart.data.datasets[1].data = xValues.map(x => (tailType === 'left' || tailType === 'two') && x <= -zCritical ? normalPDF(x) : null);
+      chart.data.datasets[2].data = xValues.map(x => (tailType === 'right' || tailType === 'two') && x >= zCritical ? normalPDF(x) : null);
+
+      const isReject = (tailType === 'two' && Math.abs(testStat) >= zCritical) ||
+                       (tailType === 'left' && testStat <= -zCritical) ||
+                       (tailType === 'right' && testStat >= zCritical);
+      const color = isReject ? 'red' : 'blue';
+
+      chart.options.plugins.annotation.annotations.testStatLine = {
+        type: 'line', xMin: testStat, xMax: testStat,
+        borderColor: color, borderWidth: 2, borderDash: [5, 5],
+        label: { display: true, content: `Test Stat: ${testStat.toFixed(2)}`, color, position: 'start', backgroundColor: 'rgba(0,0,255,0.1)', padding: 4 }
+      };
+
+      document.getElementById('decision').textContent = isReject ? 'Reject H₀' : 'Fail to Reject H₀';
+      document.getElementById('decision').style.color = color;
+
+      const pValue = tailType === 'two' ? 2 * (1 - normalCDF(Math.abs(testStat)))
+                    : tailType === 'right' ? 1 - normalCDF(testStat)
+                    : normalCDF(testStat);
+      document.getElementById('pvalue').textContent = `p-value: ${pValue.toFixed(4)}`;
+      document.getElementById('pvalue').style.color = color;
+
+      chart.update();
+    }
+
+    document.getElementById('alphaSlider').addEventListener('input', () => updateChart(parseFloat(document.getElementById('alphaSlider').value), document.getElementById('tailSelect').value));
+    document.getElementById('tailSelect').addEventListener('change', () => updateChart(parseFloat(document.getElementById('alphaSlider').value), document.getElementById('tailSelect').value));
+    document.getElementById('testStatInput').addEventListener('input', () => updateChart(parseFloat(document.getElementById('alphaSlider').value), document.getElementById('tailSelect').value));
+    document.getElementById('distributionSelect').addEventListener('change', () => updateChart(parseFloat(document.getElementById('alphaSlider').value), document.getElementById('tailSelect').value));
+    document.getElementById('dfInput').addEventListener('input', () => updateChart(parseFloat(document.getElementById('alphaSlider').value), document.getElementById('tailSelect').value));
+
+    updateChart(0.01, 'two');
+  </script>
+</body>
+</html>
